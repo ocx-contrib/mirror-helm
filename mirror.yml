@@ -1,0 +1,94 @@
+name: helm
+target:
+  registry: ocx.sh
+  repository: helm
+
+# Helm ships its binaries on the get.helm.sh CDN, not as GitHub release
+# assets (releases carry only .asc / .sha256sum sidecars). generate.py
+# enumerates versions from helm/helm GitHub releases and synthesizes the
+# canonical get.helm.sh download URLs into a url_index document.
+source:
+  type: url_index
+  generator:
+    command: ["uv", "run", "generate.py"]
+    timeout_seconds: 240
+
+# Filenames are emitted by generate.py as `helm-vX.Y.Z-OS-ARCH.EXT`.
+# Anchored ^…$ so no sidecar (.asc/.sha256sum) could ever match even if the
+# index were widened. Each pattern resolves exactly one asset for every
+# in-range version (verified for newest v4.2.0 and oldest v3.16.0).
+assets:
+  linux/amd64:
+    - "^helm-v.*-linux-amd64\\.tar\\.gz$"
+  linux/arm64:
+    - "^helm-v.*-linux-arm64\\.tar\\.gz$"
+  darwin/amd64:
+    - "^helm-v.*-darwin-amd64\\.tar\\.gz$"
+  darwin/arm64:
+    - "^helm-v.*-darwin-arm64\\.tar\\.gz$"
+  windows/amd64:
+    - "^helm-v.*-windows-amd64\\.zip$"
+  windows/arm64:
+    - "^helm-v.*-windows-arm64\\.zip$"
+
+# Every archive (tar.gz and zip) wraps its contents in a single
+# `OS-ARCH/` directory (e.g. `linux-amd64/helm`, `windows-amd64/helm.exe`).
+# strip_components: 1 drops it; the binary then lands at the content root,
+# so metadata PATH = ${installPath} (no /bin). Layout is uniform across all
+# platforms and stable from v3.0.0 through v4.x.
+asset_type:
+  type: archive
+  strip_components: 1
+
+metadata:
+  default: metadata.json
+
+skip_prereleases: true
+cascade: true
+build_timestamp: none
+
+versions:
+  # Floor = 3.16.0, the first release shipping every declared platform:
+  # darwin/arm64 lands at 3.6.0 and windows/arm64 at 3.16.0. Bounding the
+  # floor past windows/arm64's introduction keeps each backfill green
+  # (a platform absent for an in-range version is silently skipped).
+  min: "3.16.0"
+  new_per_run: 5
+  poll_interval: "0 */6 * * *"
+
+concurrency:
+  max_downloads: 8
+  max_bundles: 4
+  max_pushes: 2
+  rate_limit_ms: 100
+  max_retries: 3
+  compression_threads: 0
+
+tests:
+  - name: smoke
+    script: tests/smoke.star
+
+platforms:
+  linux/amd64:
+    runner: ubuntu-latest
+  linux/arm64:
+    runner: ubuntu-24.04-arm
+  # Both darwin arches run on the arm64 macos-14 runner; the Intel slice is
+  # exec'd by the arm64 ocx and translated by Rosetta 2 (no arch prefix —
+  # that would mis-target the arm64 ocx itself). Never macos-13 (Intel pool
+  # exhausted → deadlocks the push job).
+  darwin/amd64:
+    runner: macos-14
+  darwin/arm64:
+    runner: macos-14
+    shell: bash
+  windows/amd64:
+    runner: windows-latest
+    shell: pwsh
+  windows/arm64:
+    runner: windows-11-arm
+    shell: pwsh
+
+notify:
+  discord:
+    webhook_secret: OCX_MIRROR_DISCORD_HOOK
