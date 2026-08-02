@@ -1,0 +1,126 @@
+extends: ../mirror-base.yml
+
+name: helm
+
+# Logical index package `helm/helm` at the physical path
+# `ghcr.io/ocx-contrib/helm/helm` — slash segments, never hyphen-flattened.
+# The first segment must be this repo's own GitHub owner: GITHUB_TOKEN only
+# authorises packages owned by the repo the workflow runs in.
+#
+# Tool-as-namespace: upstream's owner IS the project (`helm/helm` on GitHub),
+# so the namespace and the name coincide.
+#
+# Succeeds the flat `ocx.sh/helm` coordinate this repository published before
+# the grouped layout, the same way mirror-kitware/cmake succeeds mirror-cmake.
+target:
+  registry: ghcr.io
+  repository: ocx-contrib/helm/helm
+
+# Helm ships its binaries on the get.helm.sh CDN, not as GitHub release
+# assets (releases carry only .asc / .sha256sum sidecars, so the native
+# `github_release` source would resolve zero archives). scripts/generate.py
+# enumerates versions from helm/helm GitHub releases and synthesizes the
+# canonical get.helm.sh download URLs into a url_index document.
+#
+# `command` resolves against THIS spec's directory, so the path is
+# `scripts/generate.py` and not `helm/scripts/generate.py`.
+source:
+  type: url_index
+  generator:
+    command: ["uv", "run", "scripts/generate.py"]
+    timeout_seconds: 240
+
+# ─── libc gate (Phase 3.5) — the evidence, not the conclusion ───────────────
+#
+# Helm is a pure-Go binary built without cgo, so get.helm.sh ships ONE Linux
+# build per arch and it is fully static. Measured 2026-08-01 on v4.2.3, on the
+# `helm` extracted from each tarball:
+#
+#   helm-v4.2.3-linux-amd64.tar.gz → linux-amd64/helm
+#     file        ELF 64-bit LSB executable, x86-64, statically linked, Go BuildID=…, stripped
+#     readelf -l  no INTERP segment
+#     readelf -d  no NEEDED entries
+#   helm-v4.2.3-linux-arm64.tar.gz → linux-arm64/helm
+#     file        ELF 64-bit LSB executable, ARM aarch64, statically linked, …
+#     readelf -l  no INTERP segment
+#     readelf -d  no NEEDED entries
+#
+# No PT_INTERP and no DT_NEEDED means the artifact requires nothing of the
+# host, so both Linux keys are BARE — no `+libc.*` suffix. Upstream publishes
+# no musl/alpine variant, so there is no counterpart to split against.
+# Container legs (ubuntu + alpine + fedora) live in ../mirror-base.yml and are
+# what turn that claim into evidence.
+#
+# ─── Scope ──────────────────────────────────────────────────────────────────
+#
+# The index is synthesized, so it contains exactly the six filenames
+# scripts/generate.py emits per version and nothing else. Helm additionally
+# publishes linux 386/arm/loong64/ppc64le/riscv64/s390x builds; those have no
+# GHA runner and the generator omits them.
+#
+# The anchored ^…$ regexes are belt-and-braces against a widened index — a
+# `.asc` or `.sha256sum` sidecar could never match. Resolution verified BOTH
+# ways at the floor (3.16.0), a midpoint (3.19.0) and the newest release: each
+# of the six patterns matches EXACTLY one asset. A pattern matching zero is
+# silently skipped, not an error — it would yield a green run with a missing
+# platform.
+assets:
+  linux/amd64:
+    - "^helm-v.*-linux-amd64\\.tar\\.gz$"
+  linux/arm64:
+    - "^helm-v.*-linux-arm64\\.tar\\.gz$"
+  darwin/amd64:
+    - "^helm-v.*-darwin-amd64\\.tar\\.gz$"
+  darwin/arm64:
+    - "^helm-v.*-darwin-arm64\\.tar\\.gz$"
+  windows/amd64:
+    - "^helm-v.*-windows-amd64\\.zip$"
+  windows/arm64:
+    - "^helm-v.*-windows-arm64\\.zip$"
+
+# Every archive (tar.gz and zip) wraps its contents in a single `OS-ARCH/`
+# directory (e.g. `linux-amd64/helm`, `windows-amd64/helm.exe`).
+# strip_components: 1 drops it; the binary then lands at the content root, so
+# metadata PATH is a bare `${installPath}` (no /bin) — which is why
+# ../mirror-base.yml must set `bin_scan: off`. Layout is uniform across all
+# platforms and stable from v3.0.0 through v4.x.
+asset_type:
+  type: archive
+  strip_components: 1
+
+metadata:
+  default: metadata.json
+
+catalog:
+  # Resolves against this spec's own directory, and keeping the logo here puts
+  # it inside this workflow's `helm/**` path trigger — a repo-root logo.* sits
+  # in no path filter and replacing it would publish nothing.
+  # CATALOG.md is found by the default probe beside this file.
+  logo: logo.svg
+
+versions:
+  # Floor = 3.16.0, the first release shipping every declared platform:
+  # darwin/arm64 lands at 3.6.0 and windows/arm64 at 3.16.0. Bounding the floor
+  # past windows/arm64's introduction keeps each backfill green (a platform
+  # absent for an in-range version is silently skipped).
+  min: "3.16.0"
+  new_per_run: 5
+  poll_interval: "0 */6 * * *"
+
+tests:
+  # `script:` resolves from the REPOSITORY ROOT — unlike `metadata.default` and
+  # `catalog.logo` above, which resolve against this spec's own directory.
+  - name: smoke
+    script: helm/tests/smoke.star
+
+annotations:
+  # From the Phase 1.5 license gate:
+  #   $ gh api repos/helm/helm/license --jq '.license.spdx_id'
+  #   Apache-2.0
+  org.opencontainers.image.licenses: "Apache-2.0"
+
+announce:
+  # Spelled out, not derived from target.repository — the logical name and the
+  # physical path are related by convention only.
+  package: helm/helm
+  fork: ocx-contrib/index

@@ -1,15 +1,24 @@
-# tests/smoke.star — stable across upstream Helm releases.
+# helm/tests/smoke.star — stable across upstream Helm releases.
 # Asserts behavior/contract (exit codes, version digits, rendered Kubernetes
 # manifest kinds), never upstream-controlled prose. See testing-practices.md.
 HELM = "helm.exe" if ocx.target_platform.os == ocx.os.Windows else "helm"
 
 # Keep Helm's config/cache/data fully inside the scratch sandbox so the run
-# never touches the runner's HOME. These are plain (non-reserved) env keys
-# that ocx.run overlays onto the composed env.
+# never reads or writes the runner's own user config. These are plain
+# (non-reserved) env keys that ocx.run overlays onto the composed env.
+#
+# HELM_* is the complete sandbox: helm consults XDG_CONFIG_HOME /
+# XDG_CACHE_HOME / XDG_DATA_HOME only as FALLBACKS when the matching HELM_*
+# is unset, so setting all three here leaves XDG never consulted — no reason
+# to restate it. HOME is pinned anyway so the claim holds by construction
+# rather than by helm's var precedence. No KUBECONFIG: `helm template`
+# without --validate never opens a cluster connection, and pointing the var
+# at a non-existent file would invent a failure mode rather than remove one.
 HELM_ENV = {
     "HELM_CONFIG_HOME": ocx.scratch_root + "/helm-config",
     "HELM_CACHE_HOME": ocx.scratch_root + "/helm-cache",
     "HELM_DATA_HOME": ocx.scratch_root + "/helm-data",
+    "HOME": ocx.scratch_root,
 }
 
 # Tier 1 + 2: liveness on the composed PATH + version shape. Helm prints
