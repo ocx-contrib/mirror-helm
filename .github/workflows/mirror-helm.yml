@@ -6,7 +6,7 @@ name: helm
 
 on:
   schedule:
-    - cron: '0 */6 * * *'
+    - cron: '54 5-23/6 * * *'
   workflow_dispatch:
   push:
     branches: [main]
